@@ -1,39 +1,39 @@
+
 # Multi-Container Todo & Calculator App
 
-A complete multi-tier application demonstrating microservices architecture with React frontend, Node.js backend, Python calculator API, and MongoDB database.
+This project demonstrates a microservices architecture using Docker Compose and Kubernetes. It features a React frontend, Node.js backend for todos, a Python Flask calculator API, a health monitor service, and a MongoDB database.
 
-## Quick Start
+
+## Quick Start (Docker Compose)
 
 ```bash
 docker compose up --build
 ```
 
-Access the application at **http://localhost:3002**
+Access the frontend at **http://localhost:3002**
 
-## Services
 
-### Frontend (React) - Port 3002
-- User interface for Todo management and Calculator
-- Real-time todo list management
-- Calculator with mathematical expression evaluation
+## Services Overview
 
-### Backend (Node.js/Express) - Port 3000
-- RESTful API for Todo operations
-- Proxy for calculator requests to Flask API
-- Health monitoring endpoints
+- **Frontend (React, port 3002):**
+  - User interface for todo management and calculator
+  - Communicates with the Node.js API
 
-### Calculator API (Python/Flask) - Internal Service
-- Mathematical expression evaluation
-- Security measures against code injection
-- Accessible via Node.js backend proxy
+- **Todo API (Node.js/Express, port 3000):**
+  - RESTful API for todos
+  - Proxies calculator requests to Flask API
+  - Exposes health endpoints
 
-### MongoDB Database
-- Stores todo items
-- Port 27017 exposed for development
+- **Calculator API (Python/Flask, port 5000, internal):**
+  - Evaluates mathematical expressions
+  - Accessed via Node.js API proxy
 
-### Health Monitor
-- Internal service for system health checks
-- MongoDB and Node.js status monitoring
+- **Health Monitor (Node.js, port 3001, internal):**
+  - Monitors MongoDB and Node.js health
+
+- **MongoDB (port 27017):**
+  - Stores todo items
+
 
 ## API Endpoints
 
@@ -44,7 +44,7 @@ POST   /api/todos              - Create new todo
 DELETE /api/todos/:id          - Delete todo
 ```
 
-### Calculator API (Via Proxy)
+### Calculator API (via Node.js proxy)
 ```
 POST   /api/calculate          - Calculate expression
   Request:  {"expression": "2+2*3"}
@@ -56,16 +56,49 @@ POST   /api/calculate          - Calculate expression
 GET    /api/health             - System health status
 ```
 
+
 ## Architecture
 
 ```
-React Frontend (3002)
-        │
-        └── Node.js API (3000)
-                ├── MongoDB
-                ├── Calculator API (Flask - Internal)
-                └── Health Monitor (Internal)
+User
+ │
+ │  http://localhost:3002
+ ▼
+Frontend (React)
+ │
+ │ REST API calls
+ ▼
+Todo API (Node.js, 3000)
+ ├── MongoDB (27017)
+ ├── Calculator API (Flask, 5000, internal)
+ └── Health Monitor (Node.js, 3001, internal)
 ```
+
+---
+
+## Kubernetes Deployment
+
+Kubernetes manifests are in the `k8s/` directory:
+
+- `frontend.yaml` — React frontend Deployment & Service
+- `todo-app.yaml` — Node.js API Deployment & Service
+- `calculator-api.yaml` — Python Flask API Deployment & Service
+- `health-monitor.yaml` — Health monitor Deployment & Service
+- `mongo.yaml` — MongoDB Deployment & Service
+- `ingress.yaml` — Ingress for routing external traffic
+
+### Deploy all services:
+
+```bash
+kubectl apply -f k8s/
+```
+
+### Accessing the app (Kubernetes):
+- Frontend: http://frontend.local (via Ingress)
+- Todo API: http://api.local/todos
+- Calculator API: http://api.local/calc
+- Health: http://health.local/
+
 
 ## Technologies
 
@@ -73,4 +106,4 @@ React Frontend (3002)
 - **Backend**: Node.js 19, Express, Mongoose
 - **Calculator**: Python 3.11, Flask
 - **Database**: MongoDB 6
-- **Orchestration**: Docker Compose
+- **Orchestration**: Docker Compose, Kubernetes
