@@ -1,0 +1,82 @@
+# Multi-container application with:
+# - React frontend (port 3002)
+# - Node.js Todo API backend (port 3000)
+# - Python Flask calculator API (port 5000 - internal)
+# - MongoDB database (port 27017)
+# - Health monitor service (port 3001 - internal)
+
+services:
+  # React Frontend - User-facing web interface
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - 3002:3002
+    depends_on:
+      - todo-app
+    environment:
+      REACT_APP_API_URL: http://todo-app:3000
+    develop:
+      watch:
+        - path: ./frontend/package.json
+          action: rebuild
+        - path: ./frontend/src
+          target: /app/src
+          action: sync
+
+  # Node.js Todo API - Backend service
+  todo-app:
+    build:
+      context: ./app
+    depends_on:
+      - todo-database
+      - health-monitor
+      - calculator-api
+    environment:
+      NODE_ENV: production
+    ports:
+      - 3000:3000
+      - 35729:35729
+    develop:
+      watch:
+        - path: ./app/package.json
+          action: rebuild
+        - path: ./app
+          target: /usr/src/app
+          action: sync
+
+  # Python Flask Calculator API - Internal service
+  calculator-api:
+    build:
+      context: ./calculator-api
+    environment:
+      FLASK_ENV: production
+    expose:
+      - 5000
+    develop:
+      watch:
+        - path: ./calculator-api
+          target: /app
+          action: sync
+
+  # Health Monitor Service - Internal service
+  health-monitor:
+    build:
+      context: ./health-monitor
+    depends_on:
+      - todo-database
+    environment:
+      NODE_ENV: production
+    develop:
+      watch:
+        - path: ./health-monitor/package.json
+          action: rebuild
+        - path: ./health-monitor
+          target: /usr/src/app
+          action: sync
+
+  # MongoDB Database
+  todo-database:
+    image: mongo:6
+    ports:
+      - 27017:27017

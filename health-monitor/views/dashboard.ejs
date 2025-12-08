@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Health Monitor Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+            max-width: 900px;
+            width: 100%;
+            padding: 40px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 0.9em;
+        }
+
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        .service-card {
+            border: 2px solid #eee;
+            border-radius: 8px;
+            padding: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .service-card:hover {
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+            border-color: #667eea;
+        }
+
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 15px;
+        }
+
+        .service-name {
+            font-size: 1.3em;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .status-badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 0.85em;
+        }
+
+        .status-up {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status-down {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+
+        .service-info {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .info-item {
+            display: grid;
+            grid-template-columns: 150px 1fr;
+            gap: 20px;
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #667eea;
+            font-size: 0.9em;
+        }
+
+        .info-value {
+            color: #555;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+            word-break: break-all;
+        }
+
+        .refresh-section {
+            text-align: center;
+            margin-top: 30px;
+            padding-top: 30px;
+            border-top: 2px solid #f0f0f0;
+        }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: 600;
+            transition: transform 0.2s ease;
+        }
+
+        .refresh-btn:hover {
+            transform: scale(1.05);
+        }
+
+        .last-update {
+            margin-top: 15px;
+            font-size: 0.85em;
+            color: #999;
+        }
+
+        .auto-refresh-check {
+            margin-top: 15px;
+        }
+
+        .auto-refresh-check input {
+            margin-right: 8px;
+        }
+
+        .auto-refresh-check label {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #667eea;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 Health Monitor</h1>
+        <p class="subtitle">Real-time health status of MongoDB and Node.js services</p>
+
+        <div class="services-grid" id="servicesContainer">
+            <div class="loading">Loading health status...</div>
+        </div>
+
+        <div class="refresh-section">
+            <button class="refresh-btn" onclick="refreshHealth()">🔄 Refresh Status</button>
+            <div class="auto-refresh-check">
+                <input type="checkbox" id="autoRefresh" onchange="toggleAutoRefresh()">
+                <label for="autoRefresh">Auto-refresh every 10 seconds</label>
+            </div>
+            <p class="last-update">Last updated: <span id="lastUpdate">Never</span></p>
+        </div>
+    </div>
+
+    <script>
+        let autoRefreshInterval;
+
+        async function refreshHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                displayHealth(data);
+            } catch (error) {
+                console.error('Error fetching health:', error);
+                document.getElementById('servicesContainer').innerHTML = 
+                    `<div class="service-card"><p style="color: red;">Failed to fetch health status: ${error.message}</p></div>`;
+            }
+        }
+
+        function displayHealth(data) {
+            const container = document.getElementById('servicesContainer');
+            container.innerHTML = '';
+
+            if (data.services && Array.isArray(data.services)) {
+                data.services.forEach(service => {
+                    container.innerHTML += createServiceCard(service);
+                });
+
+                // Add individual detailed views
+                container.innerHTML += createNodeDetailCard();
+                container.innerHTML += createMongoDetailCard();
+            }
+
+            updateLastUpdate();
+        }
+
+        function createServiceCard(service) {
+            const statusClass = service.status === 'UP' ? 'status-up' : 'status-down';
+            return `
+                <div class="service-card">
+                    <div class="service-header">
+                        <span class="service-name">${service.service}</span>
+                        <span class="status-badge ${statusClass}">${service.status}</span>
+                    </div>
+                    <div class="service-info">
+                        <div class="info-item">
+                            <span class="info-label">Status:</span>
+                            <span class="info-value">${service.status}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function createNodeDetailCard() {
+            try {
+                const response = await fetch('/api/health/node');
+                const data = await response.json();
+                
+                return `
+                    <div class="service-card">
+                        <div class="service-header">
+                            <span class="service-name">📊 Node.js Details</span>
+                            <span class="status-badge status-up">${data.status}</span>
+                        </div>
+                        <div class="service-info">
+                            <div class="info-item">
+                                <span class="info-label">Uptime:</span>
+                                <span class="info-value">${data.uptime.formatted}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Uptime (seconds):</span>
+                                <span class="info-value">${data.uptime.seconds.toFixed(2)}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">RSS Memory:</span>
+                                <span class="info-value">${data.memory.rss}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Heap Total:</span>
+                                <span class="info-value">${data.memory.heapTotal}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Heap Used:</span>
+                                <span class="info-value">${data.memory.heapUsed}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">External Memory:</span>
+                                <span class="info-value">${data.memory.external}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                return `<div class="service-card"><p style="color: red;">Failed to load Node details</p></div>`;
+            }
+        }
+
+        async function createMongoDetailCard() {
+            try {
+                const response = await fetch('/api/health/mongodb');
+                const data = await response.json();
+                
+                return `
+                    <div class="service-card">
+                        <div class="service-header">
+                            <span class="service-name">🗄️ MongoDB Details</span>
+                            <span class="status-badge ${data.status === 'UP' ? 'status-up' : 'status-down'}">${data.status}</span>
+                        </div>
+                        <div class="service-info">
+                            <div class="info-item">
+                                <span class="info-label">Status:</span>
+                                <span class="info-value">${data.status}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Response:</span>
+                                <span class="info-value">${JSON.stringify(data.response || data.error || 'N/A')}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            } catch (error) {
+                return `<div class="service-card"><p style="color: red;">Failed to load MongoDB details</p></div>`;
+            }
+        }
+
+        function updateLastUpdate() {
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+        }
+
+        function toggleAutoRefresh() {
+            if (document.getElementById('autoRefresh').checked) {
+                autoRefreshInterval = setInterval(refreshHealth, 10000);
+            } else {
+                clearInterval(autoRefreshInterval);
+            }
+        }
+
+        // Initial load
+        refreshHealth();
+    </script>
+</body>
+</html>

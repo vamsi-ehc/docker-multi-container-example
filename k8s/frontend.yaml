@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: frontend:latest
+          imagePullPolicy: Never
+          env:
+            - name: REACT_APP_API_URL
+              value: "http://todo-app:3000"
+          ports:
+            - containerPort: 3002
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 3002
+      targetPort: 3002
+  type: NodePort

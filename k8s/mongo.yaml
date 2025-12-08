@@ -1,0 +1,35 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: todo-database
+spec:
+  selector:
+    matchLabels:
+      app: todo-database
+  template:
+    metadata:
+      labels:
+        app: todo-database
+    spec:
+      containers:
+        - name: mongo
+          image: mongo:6
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+      volumes:
+        - name: mongo-data
+          emptyDir: {}   # replace with persistent volume later
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: todo-database
+spec:
+  selector:
+    app: todo-database
+  ports:
+    - port: 27017
+      targetPort: 27017

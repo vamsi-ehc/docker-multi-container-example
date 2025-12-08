@@ -1,8 +1,8 @@
 {
-  "name": "multi-container-apps",
+  "name": "health-monitor",
   "version": "1.0.0",
-  "description": "",
-  "main": "app.js",
+  "description": "MongoDB and Node.js Health Status Monitor",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon -e js,ejs server.js"
@@ -13,13 +13,9 @@
     "body-parser": "^1.20.2",
     "ejs": "^3.1.9",
     "express": "^4.18.2",
-    "moment": "^2.29.4",
-    "mongoose": "^7.1.0",
-    "morgan": "^1.10.1"
+    "mongoose": "^7.1.0"
   },
   "devDependencies": {
-    "connect-livereload": "^0.6.1",
-    "livereload": "^0.9.3",
     "nodemon": "^3.0.1"
   }
 }
