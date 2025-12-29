@@ -17,7 +17,7 @@ spec:
           imagePullPolicy: Never
           env:
             - name: REACT_APP_API_URL
-              value: "http://todo-app:3000"
+              value: "http://api.local/todos"
           ports:
             - containerPort: 3002
 ---

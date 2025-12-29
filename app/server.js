@@ -62,7 +62,12 @@ app.get('/api/health', (req, res) => {
 
 // 404 handler
 app.use((req, res) => {
-    res.status(404).json({ error: 'Not found' });
+    // Handle 404 errors with printing the requested path
+    res.status(404).json({ 
+        error: 'Not found', 
+        method: req.method,
+        endpoint: req.originalUrl 
+    });
 });
 
 const PORT = process.env.PORT || 3000;

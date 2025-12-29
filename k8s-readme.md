@@ -182,17 +182,49 @@ Save & close.
 
 ---
 
-## ❓ Want Extras?
+## update a single docker 
 
-Which enhancement do you want next?
+# example todo-app 
 
-👉 **Choose one:**
+
+# step 1
+Make your code changes in the app directory (your todo API code)
+
+Rebuild the Docker image with the same tag:
 
 ```
-1) Add HTTPS (Self-Signed TLS)
-2) Persistent Mongo Storage
-3) Auto-Reload for Dev inside Kubernetes
-4) Helm Chart Packaging (Production Ready)
+docker build -t todo-app:latest ./app
+```
+# step-2
+Restart the Kubernetes pods to use the new image:
+
+```
+kubectl rollout restart deployment todo-app
 ```
 
-Reply with the option number. 😊
+# step-3
+Verify the update:
+```
+kubectl rollout status deployment todo-app
+kubectl get pods
+```
+
+## restart Ingress
+
+```
+# Apply the updated ingress configuration
+kubectl apply -f k8s/ingress.yaml
+
+# Or if you want to delete and recreate it
+kubectl delete ingress app-ingress
+kubectl apply -f k8s/ingress.yaml
+```
+If you need to restart the ingress controller itself:
+```
+# Find the ingress controller pods
+kubectl get pods -n ingress-nginx
+
+# Delete the ingress controller pods (they'll automatically restart)
+kubectl delete pods -n ingress-nginx -l app.kubernetes.io/component=controller
+```
+The first command (kubectl apply -f k8s/ingress.yaml) is usually sufficient to apply any configuration changes you made.
