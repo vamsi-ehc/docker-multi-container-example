@@ -4,6 +4,67 @@ Complete guide to deploy your multi-container application on **Azure Kubernetes 
 
 ---
 
+## 🌐 Traffic Flow Architecture
+
+### Overall Azure AKS Setup
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                         INTERNET                                    │
+│                    (Users & External Requests)                      │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+                   ┌───────────────────────┐
+                   │  Azure Public IP (ALB)│
+                   │  (frontend.local)     │
+                   │  (api.local)          │
+                   │  (health.local)       │
+                   └───────────────────────┘
+                               ↓
+        ┌──────────────────────┴──────────────────────┐
+        │                                              │
+        ↓                                              ↓
+┌──────────────────────┐                   ┌──────────────────────┐
+│  INGRESS-NGINX       │                   │  ISTIO INGRESSGATEWAY│
+│  (Without Istio)     │                   │  (With Istio)        │
+│  Routes HTTP/HTTPS  │                   │ Routes + Policies    │
+└──────────────────────┘                   └──────────────────────┘
+        ↓                                              ↓
+        │                      ┌────────────────────┬─┴─┬──────────────┐
+        │                      │                    │   │              │
+        ↓                      ↓                    ↓   ↓              ↓
+   ┌─────────────┐    ┌──────────────┐    ┌─────────────────────────┐
+   │  Frontend   │    │  Todo App    │    │  Calculator API         │
+   │  Service    │    │  Service     │    │  Health Monitor Service │
+   │  (Port 80)  │    │  (Port 3000) │    │                         │
+   └─────────────┘    └──────────────┘    └─────────────────────────┘
+        ↓                    ↓                      ↓
+   ┌─────────────┐    ┌──────────────┐    ┌──────────────────────────┐
+   │  Frontend   │    │  Todo App    │    │  Calculator   │ Health   │
+   │  Pod (2x)   │    │  Pod (2x)    │    │  Pod (2x)     │ Pod (1x) │
+   │ +Sidecar*   │    │ +Sidecar*    │    │ +Sidecar*     │+Sidecar* │
+   │ (if Istio)  │    │ (if Istio)   │    │ (if Istio)    │(if Istio)│
+   └─────────────┘    └──────────────┘    └──────────────────────────┘
+        ↓                    ↓                      ↓
+        └────────────────────┴──────────────────────┘
+                             ↓
+                    ┌────────────────────┐
+                    │   MongoDB Service  │
+                    │   (Port 27017)     │
+                    │   Replica: 1       │
+                    └────────────────────┘
+                             ↓
+                    ┌────────────────────┐
+                    │   MongoDB Pod      │
+                    │   (No Sidecar)     │
+                    │   Persistent Vol   │
+                    └────────────────────┘
+```
+
+> **Note:** `*Sidecar` = Envoy proxy (only with Istio)
+
+---
+
 ## 📋 Prerequisites
 
 - **Azure Account** with active subscription
@@ -179,7 +240,108 @@ kubectl get nodes
 
 # 🚢 Deployment Path A: Without Istio (Standard Kubernetes)
 
-## 📁 Step 6A: Create Kubernetes Manifests (Without Istio)
+## � Traffic Flow (Without Istio)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    USER BROWSER REQUEST                             │
+│              http://frontend.local/todos                            │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+                     ┌──────────────────┐
+                     │ Azure Load       │
+                     │ Balancer (ALB)   │
+                     │ Public IP:       │
+                     │ 40.xx.xx.xx      │
+                     └──────────────────┘
+                               ↓
+                 DNS Resolution: frontend.local
+                      ↓
+          ┌─────────────────────────────┐
+          │ INGRESS-NGINX CONTROLLER    │
+          │ Namespace: ingress-nginx    │
+          │ Service Type: LoadBalancer  │
+          └─────────────────────────────┘
+                      ↓
+           ┌──────────────────────────┐
+           │ INGRESS RESOURCE         │
+           │ spec:                    │
+           │ - hosts:                 │
+           │   - frontend.local       │
+           │   - api.local            │
+           │   - health.local         │
+           │ - backend services       │
+           └──────────────────────────┘
+                      ↓
+    ┌─────────────────┬──────────────┬────────────────┐
+    ↓                 ↓              ↓                ↓
+┌────────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
+│ Frontend   │  │ Todo App   │  │Calculator│  │  Health    │
+│ Service    │  │ Service    │  │  API     │  │  Monitor   │
+│ ClusterIP  │  │ ClusterIP  │  │ Service  │  │  Service   │
+│ :80        │  │ :3000      │  │ :5000    │  │  :4000     │
+└────────────┘  └────────────┘  └──────────┘  └────────────┘
+    ↓                 ↓              ↓                ↓
+┌────────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
+│ Frontend   │  │ Todo App   │  │Calculator│  │  Health    │
+│ Pod-1      │  │ Pod-1      │  │  API     │  │  Monitor   │
+│ Pod-2      │  │ Pod-2      │  │  Pod-1   │  │  Pod-1     │
+│ (1/1)      │  │ (1/1)      │  │  Pod-2   │  │  (1/1)     │
+│            │  │            │  │  (1/1)   │  │            │
+└────────────┘  └────────────┘  └──────────┘  └────────────┘
+    ↓                 ↓              ↓ (both connect to DB)
+    │                 │              │
+    └─────────────────┴──────────────┤
+                      ↓
+            ┌──────────────────────┐
+            │ MongoDB Service      │
+            │ ClusterIP :27017     │
+            └──────────────────────┘
+                      ↓
+            ┌──────────────────────┐
+            │ MongoDB Pod          │
+            │ Persistent Storage   │
+            │ (Kubernetes PVC)     │
+            └──────────────────────┘
+```
+
+### Path A - Network Path Example
+
+**Request Flow for:** `http://api.local/todos`
+
+```
+1. Browser → ALB (40.xx.xx.xx)
+   ├─ DNS lookup: api.local → 40.xx.xx.xx
+   └─ HTTP GET /todos
+
+2. ALB → INGRESS-NGINX
+   └─ Forwards to ingress controller pod(s)
+
+3. INGRESS-NGINX → Service Routing
+   ├─ Matches host: api.local
+   ├─ Matches path: /todos
+   └─ Routes to: todo-app service
+
+4. Service → Pod Load Balancing
+   ├─ Round-robin to todo-app pod-1 or pod-2
+   └─ ClusterIP :3000 → Pod Port 3000
+
+5. Pod → Database Query
+   ├─ App connects to todo-database:27017
+   ├─ MongoDB service resolves DNS
+   └─ Reaches MongoDB pod via kube-proxy
+
+6. Response → Browser
+   ├─ MongoDB returns data
+   ├─ Todo App processes & returns JSON
+   ├─ INGRESS-NGINX forwards response
+   ├─ ALB sends to client
+   └─ Browser renders todos
+```
+
+---
+
+## �📁 Step 6A: Create Kubernetes Manifests (Without Istio)
 
 Create `k8s/aks-deployment.yaml`:
 
@@ -602,7 +764,186 @@ You should see:
 
 ---
 
-## 🏷️ Step 7B: Enable Sidecar Injection
+# 🕸️ Deployment Path B: With Istio Service Mesh
+
+## 🔄 Traffic Flow (With Istio)
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    USER BROWSER REQUEST                             │
+│              http://frontend.local/todos                            │
+└─────────────────────────────────────────────────────────────────────┘
+                               ↓
+                     ┌──────────────────┐
+                     │ Azure Load       │
+                     │ Balancer (ALB)   │
+                     │ Public IP:       │
+                     │ 40.yy.yy.yy      │
+                     └──────────────────┘
+                               ↓
+                 DNS Resolution: frontend.local
+                      ↓
+          ┌─────────────────────────────┐
+          │ ISTIO INGRESSGATEWAY        │
+          │ Namespace: istio-system     │
+          │ Service Type: LoadBalancer  │
+          │ (Envoy Proxy)               │
+          └─────────────────────────────┘
+                      ↓
+           ┌──────────────────────────┐
+           │ GATEWAY RESOURCE         │
+           │ spec:                    │
+           │ - servers:               │
+           │   - port: 80             │
+           │   - hosts:               │
+           │     - frontend.local     │
+           │     - api.local          │
+           └──────────────────────────┘
+                      ↓
+           ┌──────────────────────────┐
+           │ VIRTUALSERVICE ROUTING   │
+           │ Advanced Traffic Rules:  │
+           │ - Retries                │
+           │ - Timeouts               │
+           │ - Circuit breakers       │
+           │ - Weighted routing       │
+           └──────────────────────────┘
+                      ↓
+    ┌─────────────────┬──────────────┬────────────────┐
+    ↓                 ↓              ↓                ↓
+┌────────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
+│ Frontend   │  │ Todo App   │  │Calculator│  │  Health    │
+│ Service    │  │ Service    │  │  API     │  │  Monitor   │
+│ ClusterIP  │  │ ClusterIP  │  │ Service  │  │  Service   │
+│ :80        │  │ :3000      │  │ :5000    │  │  :4000     │
+└────────────┘  └────────────┘  └──────────┘  └────────────┘
+    ↓                 ↓              ↓                ↓
+┌────────────┐  ┌────────────┐  ┌──────────┐  ┌────────────┐
+│ Frontend   │  │ Todo App   │  │Calculator│  │  Health    │
+│ Pod-1      │  │ Pod-1      │  │  API     │  │  Monitor   │
+│ Envoy ●    │  │ Envoy ●    │  │  Pod-1   │  │  Pod-1     │
+│ App ●      │  │ App ●      │  │  Envoy ●│  │  Envoy ●   │
+│ (2/2)      │  │ (2/2)      │  │  App ●  │  │  App ●     │
+│ Pod-2      │  │ Pod-2      │  │  (2/2)  │  │  (2/2)     │
+│ Envoy ●    │  │ Envoy ●    │  │  Pod-2   │  │            │
+│ App ●      │  │ App ●      │  │  Envoy ● │  │            │
+│ (2/2)      │  │ (2/2)      │  │  App ●  │  │            │
+└────────────┘  └────────────┘  └──────────┘  └────────────┘
+    ↓                 ↓              ↓                ↓
+    │      ┌──────────────────────┐ │
+    │      │  DESTINATION RULES   │ │
+    │      │  & PEER AUTH         │ │
+    │      │ - mTLS: STRICT       │ │
+    │      │ - Retries: 3x        │ │
+    │      │ - Timeout: 10s       │ │
+    │      └──────────────────────┘ │
+    │                               │
+    └───────────────┬───────────────┘
+                    ↓
+            ┌──────────────────────┐
+            │ MongoDB Service      │
+            │ ClusterIP :27017     │
+            │ (No Sidecar)         │
+            └──────────────────────┘
+                    ↓
+            ┌──────────────────────┐
+            │ MongoDB Pod          │
+            │ Persistent Storage   │
+            │ (Kubernetes PVC)     │
+            └──────────────────────┘
+```
+
+### Path B - Network Path Example with Istio
+
+**Request Flow for:** `http://api.local/todos`
+
+```
+1. Browser → Istio Ingress Gateway (40.yy.yy.yy)
+   ├─ DNS lookup: api.local → 40.yy.yy.yy
+   └─ HTTP GET /todos
+
+2. Istio Ingress Gateway (Envoy)
+   ├─ Receives request
+   ├─ Applies Gateway policies
+   └─ Evaluates VirtualService rules
+
+3. VirtualService Routing (Policy Enforcement)
+   ├─ Matches: host = api.local
+   ├─ Matches: uri prefix = /todos
+   ├─ Checks: Retry policy (3 attempts)
+   ├─ Checks: Circuit breaker
+   ├─ Routes to: todo-app destination
+   └─ Load balancing: Round-robin
+
+4. Service → Sidecar Proxy (Envoy)
+   ├─ Pod's Envoy sidecar intercepts
+   ├─ Service mesh applies policies:
+   │  ├─ Automatic mTLS encryption
+   │  ├─ Request timeout: 10s
+   │  ├─ Retry with exponential backoff
+   │  └─ Circuit breaker on errors
+   └─ Forwards to app container
+
+5. Pod → Database Query (via Sidecar)
+   ├─ Todo App sends to todo-database:27017
+   ├─ Client Sidecar → mTLS handshake
+   ├─ Encrypted connection to MongoDB
+   └─ (MongoDB pod has NO sidecar - not in mesh)
+
+6. Metrics Collection
+   ├─ Envoy sidecars collect metrics
+   │  ├─ Request latency
+   │  ├─ Success/error rates
+   │  └─ Traffic volume
+   ├─ Sent to Prometheus (if enabled)
+   └─ Visualized in Kiali dashboard
+
+7. Response → Browser
+   ├─ MongoDB returns data (unencrypted local)
+   ├─ Sidecar applies egress rules
+   ├─ Todo App processes & returns
+   ├─ Sidecar compresses response
+   ├─ Ingress gateway forwards to client
+   ├─ ALB sends to browser
+   └─ Browser renders todos
+```
+
+### Istio Traffic Management Policies
+
+```
+┌─────────────────────────────────────────────────────┐
+│       VIRTUALSERVICE TRAFFIC POLICIES                │
+├─────────────────────────────────────────────────────┤
+│                                                     │
+│  RETRY POLICY                                      │
+│  ├─ attempts: 3                                    │
+│  ├─ perTryTimeout: 5s                             │
+│  └─ retryOn: 5xx,reset-by-peer                    │
+│                                                     │
+│  TIMEOUT POLICY                                    │
+│  └─ timeout: 10s (per request)                    │
+│                                                     │
+│  WEIGHTED ROUTING (Canary)                         │
+│  ├─ Version v1: 90% traffic                       │
+│  └─ Version v2: 10% traffic                       │
+│                                                     │
+│  CIRCUIT BREAKER (Destination Rule)                │
+│  ├─ Max connections: 100                          │
+│  ├─ Max pending requests: 50                      │
+│  ├─ Max errors: 5                                 │
+│  └─ Eject time: 30s                               │
+│                                                     │
+│  mTLS (Peer Authentication)                        │
+│  ├─ Mode: STRICT                                  │
+│  ├─ Auto-encryption between all pods              │
+│  └─ Certificates managed by Istio                 │
+│                                                     │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## 🏷️ Step 6B: Enable Sidecar Injection
 
 Label namespace for automatic sidecar injection:
 ```bash
@@ -1087,6 +1428,105 @@ Access via Azure Portal → Monitor → Containers
 
 ---
 
+### 📊 Istio Observability Visualization (Kiali Dashboard)
+
+When using Istio, you can visualize your service mesh in Kiali:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     KIALI SERVICE MESH DASHBOARD                │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Graph View:                                                    │
+│                                                                 │
+│         ┌──────────────┐          ┌──────────────┐              │
+│         │  Frontend    │◄───────►│  Todo App    │              │
+│         │   (v1: 100%) │ 95ms    │  (v1: 90%)   │              │
+│         │  ✓ Healthy  │          │  ✓ Healthy  │              │
+│         │  90 req/sec  │          │  45 req/sec  │              │
+│         └──────────────┘          └──────────────┘              │
+│               │                          │                      │
+│               │                          ▼                      │
+│               │                   ┌──────────────┐              │
+│               │                   │   MongoDB    │              │
+│               │                   │ :27017       │              │
+│               └──────────────────►│  ✓ Connected │              │
+│                                   │  5ms latency │              │
+│         ┌──────────────┐          └──────────────┘              │
+│         │ Calculator   │                                        │
+│         │  API (v2: ?) │          ┌──────────────┐              │
+│         │  (v1: 10%)   │◄────────►│  Health      │              │
+│         │ ✓ Healthy    │ 2ms      │  Monitor     │              │
+│         │  20 req/sec  │          │ ✓ Healthy    │              │
+│         └──────────────┘          └──────────────┘              │
+│                                                                 │
+│  Metrics:                                                       │
+│  ├─ Request Rate: 155 req/sec                                  │
+│  ├─ Success Rate: 99.8%                                        │
+│  ├─ P95 Latency: 150ms                                         │
+│  ├─ mTLS Status: All connections encrypted ✓                  │
+│  └─ Circuit Breaker: 0 trips                                   │
+│                                                                 │
+│  Tracing (Jaeger):                                              │
+│  ├─ Request IDs tracked across services                        │
+│  ├─ Distributed latency breakdown visible                      │
+│  ├─ Service dependencies mapped                                │
+│  └─ Error traces available                                     │
+│                                                                 │
+│  Alerts:                                                        │
+│  ├─ High Error Rate (>5%): NOT triggered                      │
+│  ├─ Slow Response (>500ms): NOT triggered                     │
+│  ├─ Pod Crash Loop: NOT triggered                             │
+│  └─ mTLS Issues: NOT triggered                                │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Metrics Collected by Istio Sidecars
+
+```
+PER REQUEST METRICS
+├─ Request Details
+│  ├─ Source Service: frontend
+│  ├─ Destination Service: todo-app
+│  ├─ Protocol: HTTP/1.1
+│  ├─ Method: GET /todos
+│  ├─ Status Code: 200
+│  ├─ Latency: 145ms
+│  └─ Bytes Sent/Received: 1.2KB / 3.5KB
+├─ Retry Information
+│  ├─ Attempts: 1 (success on first try)
+│  └─ Backoff: N/A
+├─ Circuit Breaker Status
+│  └─ Status: OPEN/CLOSED (no trips)
+└─ Security
+   ├─ TLS Version: TLSv1.3
+   ├─ Cipher: TLS_AES_256_GCM_SHA384
+   └─ Certificate Valid Until: 2025-01-02
+
+TIME SERIES METRICS
+├─ Request Rate (req/sec)
+│  ├─ Frontend → Todo: 45 req/sec
+│  ├─ Frontend → Calculator: 12 req/sec
+│  └─ Todo → MongoDB: 45 queries/sec
+├─ Latency Distribution
+│  ├─ p50 (median): 95ms
+│  ├─ p95: 150ms
+│  ├─ p99: 250ms
+│  └─ p99.9: 400ms
+├─ Error Rate
+│  ├─ Total Errors: 0.2%
+│  ├─ 5xx Errors: 0.05%
+│  ├─ 4xx Errors: 0.15%
+│  └─ Connection Errors: 0%
+└─ Throughput
+   ├─ Inbound: 2.5 Mbps
+   ├─ Outbound: 3.2 Mbps
+   └─ Total: 5.7 Mbps
+```
+
+---
+
 ## 🔄 Update Application
 
 ### Update a Single Service
@@ -1296,7 +1736,61 @@ az aks show \
 | **Cost** | Lower | ~20-30% higher |
 | **Best For** | Simple apps, cost-sensitive | Production, microservices |
 
+### Side-by-Side Network Comparison
+
+```
+WITHOUT ISTIO (Path A)              |    WITH ISTIO (Path B)
+─────────────────────────────────────────────────────────────
+
+Client Request                      |    Client Request
+        ↓                           |           ↓
+   ALB (Public IP)                  |    ALB (Public IP)
+        ↓                           |           ↓
+INGRESS-NGINX Controller            |  ISTIO INGRESS GATEWAY
+        ↓                           |    (Envoy Proxy)
+Service Selection                   |           ↓
+        ↓                           |    Gateway + VirtualService
+ClusterIP Service                   |    (Advanced Routing)
+        ↓                           |           ↓
+   Pod (Direct)                     |    ClusterIP Service
+   App Container                    |           ↓
+   (1/1)                            |    Pod (Sidecar Injection)
+        ↓                           |    ├─ Envoy Proxy
+   No Encryption                    |    └─ App Container
+   (Local Network)                  |    (2/2)
+   Direct TCP/HTTP                  |           ↓
+                                    |    Encrypted (mTLS)
+                                    |    Sidecar Policies:
+                                    |    ├─ Retry
+                                    |    ├─ Timeout
+                                    |    ├─ Circuit Break
+                                    |    └─ Observability
+```
+
+### Pod Resource Comparison
+
+```
+WITHOUT ISTIO                      |    WITH ISTIO
+────────────────────────────────────────────────────────
+
+Pod Memory: ~128-256Mi             |    Pod Memory: ~256-512Mi
+Pod CPU: ~100-200m                 |    Pod CPU: ~200-400m
+Containers per Pod: 1              |    Containers per Pod: 2
+  ├─ App Container                 |    ├─ Envoy Proxy (~50MB)
+  └─ No overhead                   |    └─ App Container
+
+Network Throughput                 |    Network Throughput
+└─ Direct: Full capacity           |    └─ Via Sidecar: ~95-98%
+
+Latency Impact                     |    Latency Impact
+└─ Minimal: <1ms                   |    └─ Low: 1-3ms (sidecar)
+```
+
 ---
+
+## 🆚 Migration from Ingress-NGINX to Istio
+
+If you're currently using ingress-nginx:
 
 ## 🏁 Quick Reference Commands
 
@@ -1342,6 +1836,175 @@ az aks get-credentials \
 - [ACR Documentation](https://docs.microsoft.com/en-us/azure/container-registry/)
 - [Azure Monitor for Containers](https://docs.microsoft.com/en-us/azure/azure-monitor/containers/container-insights-overview)
 - [Azure Pricing Calculator](https://azure.microsoft.com/en-us/pricing/calculator/)
+
+---
+
+## 🔄 Complete Request/Response Lifecycle
+
+### Example: GET http://api.local/todos
+
+```
+TIME    SOURCE              ACTION                          DESTINATION
+────────────────────────────────────────────────────────────────────────
+
+T=0ms   Browser             1. DNS Lookup: api.local
+                               └─ Resolves to: 40.xx.xx.xx ✓
+
+T=5ms   Browser             2. TCP Handshake
+                               └─ SYN → ALB:80
+
+T=8ms   ALB                 3. Accept connection
+                               └─ SYN-ACK ← Browser
+
+T=12ms  Browser             4. HTTP Request
+                               GET /todos HTTP/1.1
+                               Host: api.local
+                               └─ →→→→→ ALB
+
+T=15ms  ALB                 5. Route Request
+                               ├─ Check Ingress rule
+                               ├─ Match: host=api.local, path=/
+                               └─ Forward to: todo-app service
+
+T=18ms  INGRESS NGINX       6. Service Resolution
+                               ├─ todo-app → ClusterIP:3000
+                               ├─ Lookup service DNS
+                               └─ Find backend pods: pod-1, pod-2
+
+T=21ms  INGRESS NGINX       7. Pod Selection (RR)
+                               └─ Selected: todo-app-pod-1
+
+T=23ms  INGRESS NGINX       8. Pod Connection
+                               └─ Connect to Pod IP:3000
+
+T=28ms  Pod (App)           9. Receive Request
+                               ├─ Parse HTTP request
+                               └─ Extract path: /todos
+
+T=32ms  Pod (App)           10. Query Database
+                               ├─ Connect: mongodb://todo-db:27017
+                               ├─ Query: db.todos.find({})
+                               └─ Send to MongoDB
+
+T=45ms  MongoDB             11. Execute Query
+                               ├─ Search todos collection
+                               └─ Return: [doc1, doc2, ...]
+
+T=48ms  Pod (App)           12. Process Results
+                               ├─ Deserialize BSON
+                               ├─ Convert to JSON
+                               └─ Create response body
+
+T=52ms  Pod (App)           13. Send Response
+                               HTTP/1.1 200 OK
+                               Content-Type: application/json
+                               [...todos array...]
+                               └─ Send to INGRESS
+
+T=55ms  INGRESS NGINX       14. Forward Response
+                               └─ Send to ALB
+
+T=58ms  ALB                 15. Send to Browser
+                               └─ HTTP response → Browser
+
+T=62ms  Browser             16. Receive & Render
+                               ├─ Parse JSON response
+                               ├─ Update DOM
+                               └─ Display todos list ✓
+
+TOTAL REQUEST TIME: ~62ms
+  ├─ Network overhead: ~12ms (DNS, TCP, routing)
+  ├─ App processing: ~20ms (request handling)
+  ├─ Database query: ~15ms (query + response)
+  ├─ Serialization: ~8ms (BSON to JSON)
+  └─ Ingress overhead: ~7ms (routing, forwarding)
+```
+
+### Same Request with Istio (Path B)
+
+```
+TIME    SOURCE                  ACTION                      DESTINATION
+──────────────────────────────────────────────────────────────────────
+
+T=0ms   Browser                 1. DNS Lookup: api.local
+                                   └─ Resolves to: 40.yy.yy.yy ✓
+
+T=5ms   Browser                 2. TCP Handshake
+                                   └─ → ISTIO INGRESS GATEWAY:80
+
+T=8ms   ISTIO IG (Envoy)        3. Accept connection
+                                   └─ SYN-ACK ← Browser
+
+T=12ms  Browser                 2. HTTP Request
+                                   GET /todos HTTP/1.1
+                                   └─ →→→→→ ISTIO IG
+
+T=15ms  ISTIO IG (Envoy)        4. Gateway Processing
+                                   ├─ Match Gateway rule
+                                   ├─ Match: host=api.local
+                                   └─ Route: VirtualService
+
+T=18ms  ISTIO IG (Envoy)        5. VirtualService Policy
+                                   ├─ Check retry policy: attempts=3
+                                   ├─ Check timeout: 10s
+                                   ├─ Check circuit breaker
+                                   └─ Select destination: todo-app
+
+T=21ms  ISTIO IG (Envoy)        6. Service Resolution
+                                   ├─ Load balance: pod-1 or pod-2
+                                   └─ Selected: todo-app-pod-1
+
+T=23ms  ISTIO IG (Envoy)        7. Initiate mTLS
+                                   ├─ TLS handshake start
+                                   └─ Encrypt connection
+
+T=28ms  todo-app SIDECAR        8. Receive Encrypted
+                                   ├─ mTLS established
+                                   ├─ Decrypt request
+                                   ├─ Check authorization (AUTHZ)
+                                   └─ Forward to app container
+
+T=32ms  Pod (App)               9. Receive Request
+                                   ├─ Parse HTTP request
+                                   └─ Extract path: /todos
+
+T=35ms  Pod (App)               10. Query Database
+                                   ├─ Connect: mongodb://todo-db:27017
+                                   └─ Send query
+
+T=48ms  MongoDB                 11. Execute Query
+                                   └─ Return: [doc1, doc2, ...]
+
+T=51ms  Pod (App)               12. Process Results
+                                   └─ Convert to JSON
+
+T=54ms  Pod (App)               13. Send Response
+                                   └─ Response body ready
+
+T=55ms  todo-app SIDECAR        14. Sidecar Egress
+                                   ├─ Collect metrics
+                                   ├─ Latency so far: 42ms
+                                   ├─ Request count: +1
+                                   └─ Forward to IG
+
+T=58ms  ISTIO IG (Envoy)        15. Forward Response
+                                   ├─ Collect metrics
+                                   └─ Send to browser
+
+T=62ms  Browser                 16. Receive & Render
+                                   └─ Display todos list ✓
+
+TOTAL REQUEST TIME: ~62-65ms
+  ├─ Network overhead: ~12ms
+  ├─ mTLS encryption: ~5-8ms (extra)
+  ├─ Sidecar processing: ~3-5ms (extra)
+  ├─ App processing: ~20ms
+  ├─ Database query: ~15ms
+  └─ Serialization: ~8ms
+
+OVERHEAD FROM ISTIO: ~5-10ms (~8-15% additional latency)
+BENEFITS: Enhanced observability, security, policy enforcement
+```
 
 ---
 
